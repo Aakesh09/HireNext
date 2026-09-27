@@ -1,10 +1,11 @@
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import generics
-from rest_framework.permissions import AllowAny
-
+from rest_framework.permissions import AllowAny,IsAuthenticated
+from rest_framework.response import Response
 from .models import Job
-from .serializers import JobSerializer
-
+from .serializers import JobSerializer,RecruiterJobCreateSerializer
+from accounts.permissions import IsRecruiterRole
 
 class PublishedJobListView(generics.ListAPIView):
     """
@@ -92,3 +93,103 @@ class PublishedJobDetailView(generics.RetrieveAPIView):
             )
             .prefetch_related("job_skills")
         )
+class RecruiterJobCreateView(generics.CreateAPIView):
+    """
+    Allow recruiters to create jobs for their own company.
+    """
+
+    serializer_class = RecruiterJobCreateSerializer
+    permission_classes = [
+        IsAuthenticated,
+        IsRecruiterRole,
+    ]
+class RecruiterJobListView(generics.ListAPIView):
+    serializer_class = JobSerializer
+    permission_classes = [
+        IsAuthenticated,
+        IsRecruiterRole,
+    ]
+
+    def get_queryset(self):
+        recruiter = self.request.user.recruiter_profile
+
+        return (
+            Job.objects.filter(
+                recruiter=recruiter
+            )
+            .select_related(
+                "company",
+                "recruiter__user",
+                "category",
+            )
+            .prefetch_related("job_skills")
+        )
+
+class RecruiterJobUpdateView(generics.UpdateAPIView):
+    serializer_class = RecruiterJobCreateSerializer
+    permission_classes = [
+        IsAuthenticated,
+        IsRecruiterRole,
+    ]
+    lookup_field = "id"
+
+    def get_queryset(self):
+        recruiter = self.request.user.recruiter_profile
+
+        return (
+            Job.objects.filter(
+                recruiter=recruiter
+            )
+            .select_related(
+                "company",
+                "recruiter__user",
+                "category",
+            )
+            .prefetch_related("job_skills")
+        )
+class RecruiterJobPublishView(generics.UpdateAPIView):
+    serializer_class = JobSerializer
+    permission_classes = [
+        IsAuthenticated,
+        IsRecruiterRole,
+    ]
+    lookup_field = "id"
+
+    def get_queryset(self):
+        recruiter = self.request.user.recruiter_profile
+
+        return Job.objects.filter(
+            recruiter=recruiter
+        )
+
+    def update(self, request, *args, **kwargs):
+        job = self.get_object()
+
+        if job.status != Job.Status.DRAFT:
+            return Response(
+                {
+                    "detail": (
+                        "Only DRAFT jobs can be published."
+                    )
+                },
+                status=400,
+            )
+
+        job.status = Job.Status.PUBLISHED
+        job.published_at = timezone.now()
+        job.save(
+            update_fields=[
+                "status",
+                "published_at",
+                "updated_at",
+            ]
+        )
+
+        serializer = self.get_serializer(job)
+
+        return Response(
+            serializer.data,
+            status=200,
+        )
+    
+    

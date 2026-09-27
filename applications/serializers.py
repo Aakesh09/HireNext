@@ -1,30 +1,29 @@
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import JobApplication, SavedJob
-from jobs.models import Job
-from resumes.models import Resume
 
 
 class JobApplicationSerializer(serializers.ModelSerializer):
 
     candidate_email = serializers.EmailField(
         source="candidate.user.email",
-        read_only=True
+        read_only=True,
     )
 
     job_title = serializers.CharField(
         source="job.title",
-        read_only=True
+        read_only=True,
     )
 
     company_name = serializers.CharField(
         source="job.company.name",
-        read_only=True
+        read_only=True,
     )
 
     resume_version = serializers.IntegerField(
         source="resume.version",
-        read_only=True
+        read_only=True,
     )
 
     class Meta:
@@ -59,70 +58,98 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-def validate(self, attrs):
-    request = self.context["request"]
+    def validate(self, attrs):
 
-    candidate = request.user.candidate_profile
-    job = attrs["job"]
-    resume = attrs.get("resume")
+        request = self.context["request"]
 
-    # 1. Job must be published
-    if JobApplication.objects.filter(
-    candidate=candidate,
-    job=job,
-    ).exists():
-        raise serializers.ValidationError(
-        {"job": "You have already applied for this job."}
-    )
+        candidate = request.user.candidate_profile
+        job = attrs["job"]
+        resume = attrs.get("resume")
 
-    # 2. Check whether job openings are available
-    if job.applications_count >= job.openings:
-        raise serializers.ValidationError(
-            {
-                "job": "All available positions for this job have been filled."
-            }
+        # 1. Job must be published
+        if job.status != "PUBLISHED":
+            raise serializers.ValidationError(
+                {
+                    "job": (
+                        "Candidates can only apply "
+                        "to published jobs."
+                    )
+                }
+            )
+
+        # 2. Candidate cannot apply twice
+        if JobApplication.objects.filter(
+            candidate=candidate,
+            job=job,
+        ).exists():
+            raise serializers.ValidationError(
+                {
+                    "job": (
+                        "You have already applied "
+                        "for this job."
+                    )
+                }
+            )
+
+        # 3. Check job openings
+        if job.applications_count >= job.openings:
+            raise serializers.ValidationError(
+                {
+                    "job": (
+                        "All available positions for "
+                        "this job have been filled."
+                    )
+                }
+            )
+
+        # 4. Check application deadline
+        if (
+            job.application_deadline
+            and job.application_deadline < timezone.now().date()
+        ):
+            raise serializers.ValidationError(
+                {
+                    "job": (
+                        "The application deadline "
+                        "has passed."
+                    )
+                }
+            )
+
+        # 5. Resume must belong to candidate
+        if resume and resume.candidate_id != candidate.id:
+            raise serializers.ValidationError(
+                {
+                    "resume": (
+                        "You can only use "
+                        "your own resume."
+                    )
+                }
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+
+        request = self.context["request"]
+
+        candidate = request.user.candidate_profile
+
+        application = JobApplication.objects.create(
+            candidate=candidate,
+            **validated_data,
         )
 
-    # 3. Check application deadline
-    from django.utils import timezone
-
-    if (
-        job.application_deadline
-        and job.application_deadline < timezone.now().date()
-    ):
-        raise serializers.ValidationError(
-            {
-                "job": "The application deadline has passed."
-            }
-        )
-
-    # 4. Resume must belong to the candidate
-    if resume and resume.candidate_id != candidate.id:
-        raise serializers.ValidationError(
-            {
-                "resume": "You can only use your own resume."
-            }
-        )
-
-    # 5. Candidate cannot apply to the same job twice
-    if JobApplication.objects.filter(
-        candidate=candidate,
-        job=job,
-    ).exists():
-        raise serializers.ValidationError(
-            {
-                "job": "You have already applied for this job."
-            }
-        )
-
-    return attrs
+        return application
 
 
 class SavedJobSerializer(serializers.ModelSerializer):
+
     job_title = serializers.CharField(
         source="job.title",
         read_only=True,
     )
+
     company_name = serializers.CharField(
         source="job.company.name",
         read_only=True,
@@ -130,6 +157,7 @@ class SavedJobSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SavedJob
+
         fields = [
             "id",
             "candidate",
@@ -138,6 +166,7 @@ class SavedJobSerializer(serializers.ModelSerializer):
             "company_name",
             "saved_at",
         ]
+
         read_only_fields = [
             "id",
             "candidate",
@@ -147,7 +176,9 @@ class SavedJobSerializer(serializers.ModelSerializer):
         ]
 
     def validate_job(self, value):
+
         request = self.context["request"]
+
         candidate = request.user.candidate_profile
 
         if SavedJob.objects.filter(
@@ -160,6 +191,17 @@ class SavedJobSerializer(serializers.ModelSerializer):
 
         return value
 
+    def create(self, validated_data):
+
+        request = self.context["request"]
+
+        candidate = request.user.candidate_profile
+
+        return SavedJob.objects.create(
+            candidate=candidate,
+            **validated_data,
+        )
+
 
 class RecruiterApplicationSerializer(serializers.ModelSerializer):
 
@@ -167,22 +209,22 @@ class RecruiterApplicationSerializer(serializers.ModelSerializer):
 
     candidate_email = serializers.EmailField(
         source="candidate.user.email",
-        read_only=True
+        read_only=True,
     )
 
     job_title = serializers.CharField(
         source="job.title",
-        read_only=True
+        read_only=True,
     )
 
     company_name = serializers.CharField(
         source="job.company.name",
-        read_only=True
+        read_only=True,
     )
 
     resume_version = serializers.IntegerField(
         source="resume.version",
-        read_only=True
+        read_only=True,
     )
 
     class Meta:
@@ -225,3 +267,60 @@ class RecruiterApplicationSerializer(serializers.ModelSerializer):
             f"{obj.candidate.user.first_name} "
             f"{obj.candidate.user.last_name}"
         ).strip()
+
+    def validate_status(self, value):
+        """
+        Validate recruiter application status transitions.
+        """
+
+        application = self.instance
+
+        # Creating an application through this serializer
+        # is not expected, but keep validation safe.
+        if not application:
+            return value
+
+        current_status = application.status
+
+        allowed_transitions = {
+            JobApplication.Status.APPLIED: [
+                JobApplication.Status.REVIEWING,
+                JobApplication.Status.REJECTED,
+            ],
+
+            JobApplication.Status.REVIEWING: [
+                JobApplication.Status.SHORTLISTED,
+                JobApplication.Status.REJECTED,
+            ],
+
+            JobApplication.Status.SHORTLISTED: [
+                JobApplication.Status.INTERVIEW,
+                JobApplication.Status.REJECTED,
+            ],
+
+            JobApplication.Status.INTERVIEW: [
+                JobApplication.Status.SELECTED,
+                JobApplication.Status.REJECTED,
+            ],
+
+            JobApplication.Status.SELECTED: [],
+
+            JobApplication.Status.REJECTED: [],
+
+            JobApplication.Status.WITHDRAWN: [],
+        }
+
+        # Same status is allowed.
+        if value == current_status:
+            return value
+
+        if value not in allowed_transitions.get(
+            current_status,
+            [],
+        ):
+            raise serializers.ValidationError(
+                f"Cannot change application status "
+                f"from {current_status} to {value}."
+            )
+
+        return value

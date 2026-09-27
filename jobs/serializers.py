@@ -222,3 +222,74 @@ class JobSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+class RecruiterJobCreateSerializer(serializers.ModelSerializer):
+        class Meta:
+            model = Job
+            fields = [
+                "id",
+                "company",
+                "recruiter",
+                "category",
+                "title",
+                "slug",
+                "description",
+                "responsibilities",
+                "requirements",
+                "preferred_qualifications",
+                "location",
+                "employment_type",
+                "work_mode",
+                "experience_level",
+                "minimum_experience",
+                "maximum_experience",
+                "minimum_salary",
+                "maximum_salary",
+                "salary_currency",
+                "openings",
+                "application_deadline",
+                "status",
+                "is_featured",
+                "created_at",
+                "updated_at",
+                "published_at",
+            ]
+
+            read_only_fields = [
+                "id",
+                "recruiter",
+                "created_at",
+                "updated_at",
+                "published_at",
+            ]
+
+        def validate_company(self, value):
+            request = self.context["request"]
+            recruiter = request.user.recruiter_profile
+
+            if value.id != recruiter.company_id:
+                raise serializers.ValidationError(
+                    "You can only create jobs for your own company."
+                )
+
+            return value
+
+        def validate_status(self, value):
+            if value != Job.Status.DRAFT:
+                raise serializers.ValidationError(
+                    "New jobs must be created as DRAFT."
+                )
+
+            return value
+
+        def create(self, validated_data):
+            request = self.context["request"]
+            recruiter = request.user.recruiter_profile
+
+            validated_data["recruiter"] = recruiter
+            validated_data["status"] = Job.Status.DRAFT
+
+            job = Job(**validated_data)
+            job.full_clean()
+            job.save()
+
+            return job

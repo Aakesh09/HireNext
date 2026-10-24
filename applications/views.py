@@ -1,7 +1,6 @@
 from django.db import IntegrityError, transaction
 from django.db.models import Q,Count
 from rest_framework import generics, serializers,filters
-
 from rest_framework.response import Response
 from .models import JobApplication, SavedJob
 
@@ -31,13 +30,14 @@ class ApplyForJobView(generics.CreateAPIView):
     permission_classes = [IsCandidateRole]
 
     def perform_create(self, serializer):
-
         candidate = self.request.user.candidate_profile
 
         try:
             with transaction.atomic():
 
-                application = serializer.save()
+                application = serializer.save(
+                    candidate=candidate
+                )
 
                 job = application.job
 
@@ -62,8 +62,7 @@ class ApplyForJobView(generics.CreateAPIView):
                         "for this job."
                     )
                 }
-            )
-
+                )
 
 class MyApplicationsView(generics.ListAPIView):
     """
@@ -76,6 +75,28 @@ class MyApplicationsView(generics.ListAPIView):
 
     def get_queryset(self):
 
+        return (
+            JobApplication.objects
+            .filter(
+                candidate=self.request.user.candidate_profile
+            )
+            .select_related(
+                "job",
+                "job__company",
+                "job__recruiter__user",
+                "resume",
+            )
+        )
+
+class MyApplicationDetailView(generics.RetrieveAPIView):
+    """
+    Candidate can view one of their own applications.
+    """
+
+    serializer_class = JobApplicationSerializer
+    permission_classes = [IsCandidateRole]
+
+    def get_queryset(self):
         return (
             JobApplication.objects
             .filter(
@@ -156,6 +177,7 @@ class RecruiterApplicationListView(generics.ListAPIView):
         "updated_at",
         "status",
         "job__title",
+        "ats_score",
     ]
 
     ordering = [
@@ -193,6 +215,32 @@ class RecruiterApplicationListView(generics.ListAPIView):
             queryset = queryset.filter(
                 job_id=job
             )
+        # Filter by minimum ATS score
+        min_ats_score = self.request.query_params.get(
+            "min_ats_score"
+        )
+
+        if min_ats_score:
+            try:
+                queryset = queryset.filter(
+                    ats_score__gte=float(min_ats_score)
+                )
+            except ValueError:
+                pass
+
+
+        # Filter by maximum ATS score
+        max_ats_score = self.request.query_params.get(
+            "max_ats_score"
+        )
+
+        if max_ats_score:
+            try:
+                queryset = queryset.filter(
+                    ats_score__lte=float(max_ats_score)
+                )
+            except ValueError:
+                pass
 
         # Search
         search = self.request.query_params.get("search")
@@ -382,26 +430,19 @@ class RecruiterApplicationStatsView(generics.GenericAPIView):
                 ],
             }
         )
+
 class RecruiterApplicationDetailView(
     generics.RetrieveUpdateAPIView
 ):
-    """
-    Recruiter can view and update an application
-    belonging to their company.
-    """
-
     serializer_class = RecruiterApplicationSerializer
     permission_classes = [IsRecruiterRole]
 
     def get_queryset(self):
-
         recruiter = self.request.user.recruiter_profile
 
         return (
             JobApplication.objects
-            .filter(
-                job__company=recruiter.company
-            )
+            .filter(job__company=recruiter.company)
             .select_related(
                 "candidate",
                 "candidate__user",
@@ -412,20 +453,16 @@ class RecruiterApplicationDetailView(
         )
 
     def perform_update(self, serializer):
-
         application = self.get_object()
-
         old_status = application.status
 
         updated_application = serializer.save()
 
-        new_status = updated_application.status
-
-        if old_status != new_status:
-
+        if old_status != updated_application.status:
             create_application_status_notification(
                 updated_application
             )
+
 
 class WithdrawApplicationView(generics.UpdateAPIView):
     """
@@ -437,40 +474,60 @@ class WithdrawApplicationView(generics.UpdateAPIView):
     http_method_names = ["patch"]
 
     def get_queryset(self):
-        return JobApplication.objects.filter(
-            candidate=self.request.user.candidate_profile
+        return (
+            JobApplication.objects
+            .filter(
+                candidate=self.request.user.candidate_profile
+            )
+            .select_related("job")
         )
 
     def partial_update(self, request, *args, **kwargs):
-        application = self.get_object()
 
-        if application.status in [
-            JobApplication.Status.SELECTED,
-            JobApplication.Status.REJECTED,
-            JobApplication.Status.WITHDRAWN,
-        ]:
-            return Response(
-                {
-                    "detail": (
-                        f"Applications with status "
-                        f"{application.status} "
-                        f"cannot be withdrawn."
-                    )
-                },
-                status=400,
+        with transaction.atomic():
+
+            application = self.get_object()
+
+            # Already completed applications cannot be withdrawn.
+            if application.status in [
+                JobApplication.Status.SELECTED,
+                JobApplication.Status.REJECTED,
+                JobApplication.Status.WITHDRAWN,
+            ]:
+                return Response(
+                    {
+                        "detail": (
+                            f"Applications with status "
+                            f"{application.status} "
+                            f"cannot be withdrawn."
+                        )
+                    },
+                    status=400,
+                )
+
+            application.status = JobApplication.Status.WITHDRAWN
+
+            application.save(
+                update_fields=[
+                    "status",
+                    "updated_at",
+                ]
             )
 
-        application.status = JobApplication.Status.WITHDRAWN
-        application.save(
-            update_fields=[
-                "status",
-                "updated_at",
-            ]
-        )
+            job = application.job
 
-        serializer = self.get_serializer(application)
+            if job.applications_count > 0:
+                job.applications_count -= 1
 
-        return Response(
-            serializer.data,
-            status=200,
-        )
+                job.save(
+                    update_fields=[
+                        "applications_count",
+                    ]
+                )
+
+            serializer = self.get_serializer(application)
+
+            return Response(
+                serializer.data,
+                status=200,
+            )

@@ -4,7 +4,11 @@ from .models import Notification
 def create_application_received_notification(application):
     recruiter = application.job.recruiter
 
-    Notification.objects.create(
+    # Skip the notification if no recruiter is assigned.
+    if recruiter is None:
+        return None
+
+    return Notification.objects.create(
         recipient=recruiter.user,
         notification_type=Notification.NotificationType.APPLICATION_RECEIVED,
         title="New Application Received",
@@ -20,7 +24,7 @@ def create_application_received_notification(application):
 def create_application_status_notification(application):
     candidate = application.candidate.user
 
-    Notification.objects.create(
+    return Notification.objects.create(
         recipient=candidate,
         notification_type=Notification.NotificationType.APPLICATION_STATUS,
         title="Application Status Updated",

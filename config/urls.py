@@ -20,5 +20,9 @@ urlpatterns = [
         "api/notifications/",
         include("notifications.urls"),
     ),
+    path(
+        "api/resumes/",
+        include("resumes.urls"),
+    ),
     
 ]

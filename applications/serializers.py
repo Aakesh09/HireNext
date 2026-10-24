@@ -22,7 +22,6 @@ class JobApplicationSerializer(serializers.ModelSerializer):
     )
 
     resume_version = serializers.IntegerField(
-        source="resume.version",
         read_only=True,
     )
 
@@ -40,7 +39,11 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "resume_version",
             "cover_letter",
             "status",
-            "recruiter_notes",
+            "ats_score",
+            "matched_required_skills",
+            "missing_required_skills",
+            "matched_preferred_skills",
+            "missing_preferred_skills",
             "applied_at",
             "updated_at",
         ]
@@ -53,7 +56,11 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             "company_name",
             "resume_version",
             "status",
-            "recruiter_notes",
+            "ats_score",
+            "matched_required_skills",
+            "missing_required_skills",
+            "matched_preferred_skills",
+            "missing_preferred_skills",
             "applied_at",
             "updated_at",
         ]
@@ -107,14 +114,9 @@ class JobApplicationSerializer(serializers.ModelSerializer):
             job.application_deadline
             and job.application_deadline < timezone.now().date()
         ):
-            raise serializers.ValidationError(
-                {
-                    "job": (
-                        "The application deadline "
-                        "has passed."
-                    )
-                }
-            )
+            raise serializers.ValidationError({
+                "job": "The application deadline has passed."
+            })
 
         # 5. Resume must belong to candidate
         if resume and resume.candidate_id != candidate.id:
@@ -135,9 +137,37 @@ class JobApplicationSerializer(serializers.ModelSerializer):
 
         candidate = request.user.candidate_profile
 
+        job = validated_data["job"]
+        resume = validated_data.get("resume")
+
+        ats_result = {
+            "score": 0,
+            "matched_required": [],
+            "missing_required": [],
+            "matched_preferred": [],
+            "missing_preferred": [],
+        }
+
+        if resume and resume.parsed_text:
+            from resumes.services import calculate_ats_score
+
+            ats_result = calculate_ats_score(
+                resume.parsed_text,
+                job.requirements,
+                job.preferred_qualifications,
+            )
+
         application = JobApplication.objects.create(
             candidate=candidate,
-            **validated_data,
+            job=job,
+            resume=resume,
+            resume_version=resume.version if resume else None,
+            cover_letter=validated_data.get("cover_letter", ""),
+            ats_score=ats_result["score"],
+            matched_required_skills=ats_result["matched_required"],
+            missing_required_skills=ats_result["missing_required"],
+            matched_preferred_skills=ats_result["matched_preferred"],
+            missing_preferred_skills=ats_result["missing_preferred"],
         )
 
         return application
@@ -223,7 +253,6 @@ class RecruiterApplicationSerializer(serializers.ModelSerializer):
     )
 
     resume_version = serializers.IntegerField(
-        source="resume.version",
         read_only=True,
     )
 
@@ -243,6 +272,11 @@ class RecruiterApplicationSerializer(serializers.ModelSerializer):
             "cover_letter",
             "status",
             "recruiter_notes",
+            "ats_score",
+            "matched_required_skills",
+            "missing_required_skills",
+            "matched_preferred_skills",
+            "missing_preferred_skills",
             "applied_at",
             "updated_at",
         ]
@@ -258,6 +292,11 @@ class RecruiterApplicationSerializer(serializers.ModelSerializer):
             "resume",
             "resume_version",
             "cover_letter",
+            "ats_score",
+            "matched_required_skills",
+            "missing_required_skills",
+            "matched_preferred_skills",
+            "missing_preferred_skills",
             "applied_at",
             "updated_at",
         ]

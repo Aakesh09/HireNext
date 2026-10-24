@@ -40,6 +40,11 @@ class JobApplication(models.Model):
         blank=True,
         related_name="applications",
     )
+    resume_version = models.PositiveIntegerField(
+    null=True,
+    blank=True,
+    help_text="Resume version used when this application was submitted.",
+    )
 
     cover_letter = models.TextField(
         blank=True,
@@ -52,6 +57,32 @@ class JobApplication(models.Model):
     )
 
     recruiter_notes = models.TextField(
+        blank=True,
+    )
+
+    ats_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+    )
+
+    matched_required_skills = models.JSONField(
+        default=list,
+        blank=True,
+    )
+
+    missing_required_skills = models.JSONField(
+        default=list,
+        blank=True,
+    )
+
+    matched_preferred_skills = models.JSONField(
+        default=list,
+        blank=True,
+    )
+
+    missing_preferred_skills = models.JSONField(
+        default=list,
         blank=True,
     )
 

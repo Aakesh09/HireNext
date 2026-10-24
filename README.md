@@ -26,5 +26,5 @@ An AI-Powered Recruitment Platform built with Django.
 
 🚧 Under Development
 #vijayaramesh
-#TestRecruiter@123
-#TestCandidate@123
+#test@1234
+#test@1234

@@ -5,6 +5,7 @@ from .views import (
     NotificationDetailView,
     MarkNotificationReadView,
     MarkAllNotificationsReadView,
+    UnreadNotificationCountView,
 )
 
 urlpatterns = [
@@ -14,14 +15,19 @@ urlpatterns = [
         name="my-notifications",
     ),
     path(
-    "read-all/",
-    MarkAllNotificationsReadView.as_view(),
-    name="notifications-read-all",
+        "unread-count/",
+        UnreadNotificationCountView.as_view(),
+        name="notifications-unread-count",
     ),
     path(
-    "<uuid:pk>/read/",
-    MarkNotificationReadView.as_view(),
-    name="notification-read",
+        "read-all/",
+        MarkAllNotificationsReadView.as_view(),
+        name="notifications-read-all",
+    ),
+    path(
+        "<uuid:pk>/read/",
+        MarkNotificationReadView.as_view(),
+        name="notification-read",
     ),
     path(
         "<uuid:pk>/",

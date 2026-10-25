@@ -122,3 +122,65 @@ class NotificationAPITests(APITestCase):
             response.status_code,
             [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
         )
+    def test_user_can_filter_unread_notifications(self):
+        response = self.client.get(
+            reverse("my-notifications"),
+            {"is_read": "false"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data
+        if isinstance(results, dict) and "results" in results:
+            results = results["results"]
+
+        notification_ids = {item["id"] for item in results}
+
+        self.assertIn(str(self.my_notification.id), notification_ids)
+        self.assertNotIn(str(self.other_notification.id), notification_ids)
+
+    def test_user_can_filter_read_notifications(self):
+        self.my_notification.is_read = True
+        self.my_notification.save(update_fields=["is_read"])
+
+        response = self.client.get(
+            reverse("my-notifications"),
+            {"is_read": "true"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data
+        if isinstance(results, dict) and "results" in results:
+            results = results["results"]
+
+        notification_ids = {item["id"] for item in results}
+
+        self.assertIn(str(self.my_notification.id), notification_ids)
+        self.assertNotIn(str(self.other_notification.id), notification_ids)
+
+    def test_unread_count_only_includes_current_users_notifications(self):
+        response = self.client.get(
+            reverse("notifications-unread-count")
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["unread_count"], 1)
+
+    def test_notification_detail_does_not_allow_updates(self):
+        response = self.client.patch(
+            reverse(
+                "notification-detail",
+                kwargs={"pk": self.my_notification.id},
+            ),
+            {"is_read": True},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+        self.my_notification.refresh_from_db()
+        self.assertFalse(self.my_notification.is_read)
